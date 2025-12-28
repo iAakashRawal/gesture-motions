@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Deep Space Gesture Interface</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;700&display=swap');
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Space Grotesk', sans-serif; }
+        
+        #video-container { 
+            position: fixed; bottom: 30px; right: 30px; 
+            width: 180px; height: 135px; 
+            border-radius: 20px; overflow: hidden; 
+            border: 1px solid rgba(255,255,255,0.1); 
+            z-index: 50; transform: scaleX(-1);
+            box-shadow: 0 0 30px rgba(0,0,0,0.5), 0 0 10px rgba(99, 102, 241, 0.3);
+        }
+        
+        #webcam { width: 100%; height: 100%; object-fit: cover; filter: grayscale(1) contrast(1.2); }
+
+        .ui-overlay { 
+            position: fixed; top: 40px; left: 40px; 
+            color: white; pointer-events: none; z-index: 40; 
+        }
+
+        #loading-screen { 
+            position: fixed; inset: 0; 
+            background: radial-gradient(circle at center, #0a0a14 0%, #000 100%); 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            z-index: 100; color: white; transition: opacity 1.5s cubic-bezier(0.4, 0, 0.2, 1); 
+        }
+
+        .scan-line {
+            width: 200px; height: 2px; background: #6366f1;
+            box-shadow: 0 0 15px #6366f1;
+            animation: scan 2s ease-in-out infinite;
+        }
+
+        @keyframes scan {
+            0%, 100% { transform: translateY(-20px); opacity: 0; }
+            50% { transform: translateY(20px); opacity: 1; }
+        }
+
+        canvas { display: block; filter: contrast(1.1) brightness(1.1); }
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <div class="mb-8 relative">
+            <div class="w-16 h-16 border-t-2 border-indigo-500 rounded-full animate-spin"></div>
+            <div class="absolute inset-0 flex items-center justify-center">
+                <div class="scan-line"></div>
+            </div>
+        </div>
+        <p class="text-2xl font-light tracking-[0.3em] uppercase mb-2">Synchronizing Neural Link</p>
+        <p class="text-xs tracking-widest opacity-40 font-mono">CALIBRATING HAND TRACKING KERNEL...</p>
+    </div>
+
+    <div class="ui-overlay">
+        <div class="flex items-center gap-4 mb-4">
+            <div class="h-[1px] w-12 bg-indigo-500/50"></div>
+            <h1 class="text-3xl font-bold tracking-tighter">ASTRA <span class="text-indigo-500">OS</span></h1>
+        </div>
+        
+        <div class="space-y-6">
+            <div class="bg-white/5 border border-white/10 p-5 rounded-2xl backdrop-blur-xl w-72">
+                <p class="text-[10px] uppercase tracking-widest text-indigo-400 mb-3 font-bold">Navigation Protocol</p>
+                <ul class="space-y-3 text-xs font-light">
+                    <li class="flex items-center gap-3">
+                        <div class="w-1.5 h-1.5 rounded-full bg-indigo-500 shadow-[0_0_8px_#6366f1]"></div>
+                        <span>Palm orientation dictates rotation</span>
+                    </li>
+                    <li class="flex items-center gap-3 text-white/60">
+                        <div class="w-1.5 h-1.5 rounded-full bg-white/20"></div>
+                        <span>Pinch (Thumb + Index) to Warp</span>
+                    </li>
+                    <li class="flex items-center gap-3 text-white/60">
+                        <div class="w-1.5 h-1.5 rounded-full bg-white/20"></div>
+                        <span>Open hand to Stabilize</span>
+                    </li>
+                </ul>
+            </div>
+
+            <div id="status-bar" class="font-mono text-[9px] text-white/30 tracking-tighter uppercase">
+                Systems: Nominal | Signal: <span id="signal-strength">Searching...</span>
+            </div>
+        </div>
+    </div>
+
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+    </div>
+
+    <script>
+        const PARAMS = {
+            starCount: 25000,
+            bgStarCount: 5000,
+            radius: 12,
+            branches: 4,
+            spin: 0.8,
+            randomness: 0.25,
+            randomnessPower: 3,
+            insideColor: '#ff7b39',
+            outsideColor: '#2b4dff'
+        };
+
+        let scene, camera, renderer, galaxy, stars, backgroundStars;
+        let handData = { x: 0, y: 0, pinch: 0, active: false };
+        let smoothedHand = { x: 0, y: 0, zoom: 15 };
+        
+        const videoElement = document.getElementById('webcam');
+        const loadingScreen = document.getElementById('loading-screen');
+        const signalText = document.getElementById('signal-strength');
+
+        function initScene() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.z = 20;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            createBackgroundStars();
+            createGalaxy();
+            animate();
+        }
+
+        // Creates a massive distant starfield
+        function createBackgroundStars() {
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(PARAMS.bgStarCount * 3);
+            const sizes = new Float32Array(PARAMS.bgStarCount);
+
+            for (let i = 0; i < PARAMS.bgStarCount; i++) {
+                const i3 = i * 3;
+                const r = 400 + Math.random() * 500;
+                const theta = Math.random() * Math.PI * 2;
+                const phi = Math.acos(2 * Math.random() - 1);
+
+                pos[i3] = r * Math.sin(phi) * Math.cos(theta);
+                pos[i3 + 1] = r * Math.sin(phi) * Math.sin(theta);
+                pos[i3 + 2] = r * Math.cos(phi);
+                
+                sizes[i] = Math.random() * 2;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('size', new THREE.BufferAttribute(sizes, 1));
+
+            const mat = new THREE.PointsMaterial({
+                color: 0xffffff,
+                size: 0.7,
+                transparent: true,
+                opacity: 0.6,
+                sizeAttenuation: false
+            });
+
+            backgroundStars = new THREE.Points(geo, mat);
+            scene.add(backgroundStars);
+        }
+
+        function createGalaxy() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(PARAMS.starCount * 3);
+            const colors = new Float32Array(PARAMS.starCount * 3);
+            const scales = new Float32Array(PARAMS.starCount);
+
+            const colorInside = new THREE.Color(PARAMS.insideColor);
+            const colorOutside = new THREE.Color(PARAMS.outsideColor);
+
+            for (let i = 0; i < PARAMS.starCount; i++) {
+                const i3 = i * 3;
+                
+                const radius = Math.random() * PARAMS.radius;
+                const spinAngle = radius * PARAMS.spin;
+                const branchAngle = (i % PARAMS.branches) / PARAMS.branches * Math.PI * 2;
+
+                const randomX = Math.pow(Math.random(), PARAMS.randomnessPower) * (Math.random() < 0.5 ? 1 : -1) * PARAMS.randomness * radius;
+                const randomY = Math.pow(Math.random(), PARAMS.randomnessPower) * (Math.random() < 0.5 ? 1 : -1) * PARAMS.randomness * (radius * 0.4);
+                const randomZ = Math.pow(Math.random(), PARAMS.randomnessPower) * (Math.random() < 0.5 ? 1 : -1) * PARAMS.randomness * radius;
+
+                positions[i3 + 0] = Math.cos(branchAngle + spinAngle) * radius + randomX;
+                positions[i3 + 1] = randomY;
+                positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + randomZ;
+
+                const mixedColor = colorInside.clone();
+                mixedColor.lerp(colorOutside, (radius / PARAMS.radius) + (Math.random() * 0.2 - 0.1));
+
+                colors[i3 + 0] = mixedColor.r;
+                colors[i3 + 1] = mixedColor.g;
+                colors[i3 + 2] = mixedColor.b;
+
+                scales[i] = Math.random();
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.setAttribute('scale', new THREE.BufferAttribute(scales, 1));
+
+            const material = new THREE.PointsMaterial({
+                size: 0.08,
+                sizeAttenuation: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            stars = new THREE.Points(geometry, material);
+            galaxy = new THREE.Group();
+            galaxy.add(stars);
+            scene.add(galaxy);
+        }
+
+        function setupMediaPipe() {
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.6,
+                minTrackingConfidence: 0.6
+            });
+
+            hands.onResults(onResults);
+
+            const cameraInput = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 640,
+                height: 480
+            });
+            cameraInput.start();
+        }
+
+        function onResults(results) {
+            if (loadingScreen.style.opacity !== '0') {
+                loadingScreen.style.opacity = '0';
+                setTimeout(() => loadingScreen.remove(), 1500);
+            }
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const hand = results.multiHandLandmarks[0];
+                handData.active = true;
+                signalText.innerText = "LOCKED";
+                signalText.className = "text-green-500 font-bold";
+
+                // Map palm center
+                handData.x = (hand[9].x - 0.5) * 2;
+                handData.y = (hand[9].y - 0.5) * 2;
+
+                // Pinch Calculation
+                const dx = hand[4].x - hand[8].x;
+                const dy = hand[4].y - hand[8].y;
+                const distance = Math.sqrt(dx*dx + dy*dy);
+                handData.pinch = distance < 0.06 ? 1 : 0;
+            } else {
+                handData.active = false;
+                signalText.innerText = "LOST";
+                signalText.className = "text-red-500 font-bold animate-pulse";
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Natural galaxy drift
+            galaxy.rotation.y += 0.0015;
+            backgroundStars.rotation.y += 0.0001;
+
+            if (handData.active) {
+                // Smoothing (Interpolation)
+                smoothedHand.x += (handData.x - smoothedHand.x) * 0.08;
+                smoothedHand.y += (handData.y - smoothedHand.y) * 0.08;
+                
+                const targetZ = handData.pinch === 1 ? 4 : 18;
+                smoothedHand.zoom += (targetZ - smoothedHand.zoom) * 0.05;
+
+                // Dynamic Rotation
+                galaxy.rotation.x += (smoothedHand.y * 1.2 - galaxy.rotation.x) * 0.05;
+                galaxy.rotation.z += (smoothedHand.x * 0.5 - galaxy.rotation.z) * 0.05;
+                
+                // Tilt the whole scene slightly for depth
+                camera.position.x += (smoothedHand.x * 5 - camera.position.x) * 0.02;
+                camera.position.y += (-smoothedHand.y * 5 - camera.position.y) * 0.02;
+                camera.position.z += (smoothedHand.zoom - camera.position.z) * 0.1;
+            } else {
+                // Return to neutral state
+                camera.position.x *= 0.98;
+                camera.position.y *= 0.98;
+                camera.position.z += (20 - camera.position.z) * 0.01;
+            }
+
+            camera.lookAt(scene.position);
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.onload = () => {
+            initScene();
+            setupMediaPipe();
+        };
+    </script>
+</body>
+</html>
+

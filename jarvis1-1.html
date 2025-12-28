@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ASTRA-V: JARVIS Neural Interface</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&family=Space+Grotesk:wght@300&display=swap');
+        
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Space Grotesk', sans-serif; cursor: none; }
+        
+        #video-container { 
+            position: fixed; bottom: 30px; right: 30px; 
+            width: 240px; height: 180px; 
+            border-radius: 16px; overflow: hidden; 
+            border: 1px solid rgba(0, 255, 255, 0.3); 
+            z-index: 50; transform: scaleX(-1);
+            background: rgba(0,0,0,0.9);
+            box-shadow: 0 0 30px rgba(0, 255, 255, 0.1);
+        }
+        
+        #webcam { width: 100%; height: 100%; object-fit: cover; opacity: 0.4; filter: brightness(1.2) contrast(1.2) hue-rotate(180deg); }
+        #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 51; }
+
+        .ui-overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            color: #00ffff; pointer-events: none; z-index: 40; 
+            padding: 50px;
+        }
+
+        #loading-screen { 
+            position: fixed; inset: 0; 
+            background: radial-gradient(circle at center, #001a1a 0%, #000 100%); 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            z-index: 100; color: #00ffff; transition: opacity 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .hud-ring {
+            position: absolute; border: 1px solid rgba(0, 255, 255, 0.05); border-radius: 50%;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            animation: rotate 30s linear infinite;
+        }
+
+        @keyframes rotate { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+        .glitch { animation: glitch 1s linear infinite; }
+        @keyframes glitch { 
+            0% { transform: translate(0); }
+            20% { transform: translate(-2px, 2px); }
+            40% { transform: translate(-2px, -2px); }
+            60% { transform: translate(2px, 2px); }
+            80% { transform: translate(2px, -2px); }
+            100% { transform: translate(0); }
+        }
+
+        .data-label { font-family: 'Orbitron', sans-serif; font-size: 9px; letter-spacing: 3px; opacity: 0.5; }
+        .data-value { font-family: 'Orbitron', sans-serif; font-size: 14px; font-weight: 900; }
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <div class="relative w-48 h-48 mb-12">
+            <div class="absolute inset-0 border border-cyan-500/10 rounded-full scale-150"></div>
+            <div class="absolute inset-0 border-t-2 border-cyan-400 rounded-full animate-spin"></div>
+            <div class="absolute inset-8 border-b-2 border-cyan-600 rounded-full animate-spin-reverse" style="animation-duration: 1.5s;"></div>
+            <div class="absolute inset-0 flex items-center justify-center font-black text-2xl tracking-widest">A-V</div>
+        </div>
+        <p class="glitch text-2xl tracking-[0.8em] font-black uppercase">Syncing Interface</p>
+        <p class="text-[10px] opacity-40 mt-6 font-mono tracking-widest uppercase">Initializing neural path tracking v.4.0.2</p>
+    </div>
+
+    <div class="ui-overlay">
+        <!-- Background HUD Rings -->
+        <div class="hud-ring w-[110vh] h-[110vh]"></div>
+        <div class="hud-ring w-[85vh] h-[85vh]" style="animation-duration: 45s; border-style: dashed;"></div>
+        
+        <div class="flex justify-between items-start h-full">
+            <div class="flex flex-col h-full">
+                <!-- Header -->
+                <div class="mb-12">
+                    <div class="flex items-center gap-4 mb-2">
+                        <div class="w-1.5 h-10 bg-gradient-to-b from-cyan-400 to-blue-600"></div>
+                        <h1 class="text-5xl font-black tracking-tighter font-['Orbitron']">ASTRA-V</h1>
+                    </div>
+                    <div class="data-label text-cyan-300">CORE SYSTEM OVERVIEW</div>
+                </div>
+                
+                <!-- Main Diagnostics -->
+                <div class="space-y-8 flex-grow">
+                    <div class="bg-white/5 border-l-4 border-cyan-400 p-6 w-80 backdrop-blur-xl rounded-r-2xl">
+                        <div class="data-label mb-3">NEURAL LINK</div>
+                        <div id="gesture-hint" class="text-sm font-light leading-relaxed text-cyan-100">Initializing biometric handshake...</div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-4 w-80">
+                        <div class="bg-cyan-900/10 border border-cyan-500/20 p-4 rounded-xl">
+                            <div class="data-label">VELOCITY</div>
+                            <div id="val-vel" class="data-value">0.00</div>
+                        </div>
+                        <div class="bg-cyan-900/10 border border-cyan-500/20 p-4 rounded-xl">
+                            <div class="data-label">DENSITY</div>
+                            <div class="data-value">45,000</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Footer Log -->
+                <div class="max-w-xs opacity-40 font-mono text-[9px] space-y-1 mb-8">
+                    <div class="flex gap-2"><span>[LOG]</span> <span id="log-line">> WAITING FOR INPUT...</span></div>
+                    <div class="flex gap-2"><span>[OS]</span> <span>KERNEL: STARK_v85.2</span></div>
+                </div>
+            </div>
+
+            <!-- Right Side Readouts -->
+            <div class="text-right space-y-12">
+                <div class="space-y-2">
+                    <div class="data-label">TELEMETRY</div>
+                    <div class="font-mono text-xs text-cyan-400">
+                        <div id="coords-x">X_AXIS: +0.0000</div>
+                        <div id="coords-y">Y_AXIS: -0.0000</div>
+                        <div id="coords-z">Z_DEPTH: 25.00</div>
+                    </div>
+                </div>
+                
+                <div class="space-y-4">
+                    <div class="data-label">INTERFACE SIGNAL</div>
+                    <div id="signal-strength" class="text-xl font-black text-red-500 tracking-tighter">OFFLINE</div>
+                    <div class="w-full bg-cyan-950 h-1 rounded-full overflow-hidden">
+                        <div id="signal-bar" class="bg-cyan-400 h-full w-0 transition-all"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="output_canvas"></canvas>
+    </div>
+
+    <script>
+        // --- AUDIO ENGINE ---
+        let audioCtx;
+        function beep(f, t='sine', v=0.05, d=0.1) {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const o = audioCtx.createOscillator();
+            const g = audioCtx.createGain();
+            o.type = t; o.frequency.setValueAtTime(f, audioCtx.currentTime);
+            g.gain.setValueAtTime(v, audioCtx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + d);
+            o.connect(g); g.connect(audioCtx.destination);
+            o.start(); o.stop(audioCtx.currentTime + d);
+        }
+
+        const PARAMS = {
+            count: 45000,
+            radius: 18,
+            branches: 4,
+            spin: 1.5,
+            innerCol: '#00ffff',
+            outerCol: '#0033ff'
+        };
+
+        let scene, camera, renderer, galaxy, stars;
+        let handData = { x: 0, y: 0, pinch: 0, active: false };
+        let smooth = { x: 0, y: 0, zoom: 25, warp: 0 };
+        
+        const video = document.getElementById('webcam');
+        const overlay = document.getElementById('output_canvas');
+        const ctx = overlay.getContext('2d');
+        const loader = document.getElementById('loading-screen');
+
+        function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.z = 25;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            document.body.appendChild(renderer.domElement);
+
+            createGalaxy();
+            animate();
+        }
+
+        function createGalaxy() {
+            const geo = new THREE.BufferGeometry();
+            const pos = new Float32Array(PARAMS.count * 3);
+            const col = new Float32Array(PARAMS.count * 3);
+            const initPos = new Float32Array(PARAMS.count * 3);
+
+            const cIn = new THREE.Color(PARAMS.innerCol);
+            const cOut = new THREE.Color(PARAMS.outerCol);
+
+            for (let i = 0; i < PARAMS.count; i++) {
+                const i3 = i * 3;
+                const r = Math.random() * PARAMS.radius;
+                const spin = r * PARAMS.spin;
+                const branch = (i % PARAMS.branches) / PARAMS.branches * Math.PI * 2;
+
+                const rx = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.4 * r;
+                const ry = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.2 * r;
+                const rz = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.4 * r;
+
+                pos[i3] = Math.cos(branch + spin) * r + rx;
+                pos[i3+1] = ry;
+                pos[i3+2] = Math.sin(branch + spin) * r + rz;
+                
+                initPos[i3] = pos[i3]; initPos[i3+1] = pos[i3+1]; initPos[i3+2] = pos[i3+2];
+
+                const mix = cIn.clone().lerp(cOut, r / PARAMS.radius);
+                col[i3] = mix.r; col[i3+1] = mix.g; col[i3+2] = mix.b;
+            }
+
+            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+            geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+            geo.userData = { initPos };
+
+            stars = new THREE.Points(geo, new THREE.PointsMaterial({
+                size: 0.04, sizeAttenuation: true, depthWrite: false, 
+                blending: THREE.AdditiveBlending, vertexColors: true, transparent: true, opacity: 0.8
+            }));
+
+            galaxy = new THREE.Group();
+            galaxy.add(stars);
+            scene.add(galaxy);
+        }
+
+        function setupAI() {
+            const hands = new Hands({ locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}` });
+            hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+            hands.onResults(onResults);
+
+            new Camera(video, { onFrame: async () => await hands.send({ image: video }), width: 640, height: 480 }).start();
+        }
+
+        function onResults(res) {
+            if (loader.style.opacity !== '0') {
+                loader.style.opacity = '0';
+                beep(880); setTimeout(() => loader.remove(), 1200);
+            }
+
+            ctx.clearRect(0, 0, overlay.width, overlay.height);
+            
+            if (res.multiHandLandmarks && res.multiHandLandmarks.length > 0) {
+                const h = res.multiHandLandmarks[0];
+                if(!handData.active) beep(1200, 'square', 0.03);
+                
+                handData.active = true;
+                document.getElementById('signal-strength').innerText = "LINKED";
+                document.getElementById('signal-strength').className = "text-xl font-black text-cyan-400 tracking-tighter";
+                document.getElementById('signal-bar').style.width = "100%";
+                document.getElementById('gesture-hint').innerHTML = "SYSTEM ENGAGED <br> <span class='text-cyan-400 font-bold'>GESTURE CONTROL ACTIVE</span>";
+
+                handData.x = (h[9].x - 0.5) * 2;
+                handData.y = (h[9].y - 0.5) * 2;
+
+                const dist = Math.sqrt(Math.pow(h[4].x - h[8].x, 2) + Math.pow(h[4].y - h[8].y, 2));
+                const pinch = dist < 0.05 ? 1 : 0;
+                if(pinch && !handData.pinch) beep(2000, 'sine', 0.1, 0.2);
+                handData.pinch = pinch;
+
+                drawConnectors(ctx, h, HAND_CONNECTIONS, {color: '#00ffff22', lineWidth: 2});
+                drawLandmarks(ctx, h, {color: '#00ffff', lineWidth: 1, radius: 2});
+            } else {
+                handData.active = false;
+                document.getElementById('signal-strength').innerText = "OFFLINE";
+                document.getElementById('signal-strength').className = "text-xl font-black text-red-500 tracking-tighter";
+                document.getElementById('signal-bar').style.width = "0%";
+                document.getElementById('gesture-hint').innerText = "SEARCHING FOR NEURAL HANDSHAKE...";
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            galaxy.rotation.y += 0.001;
+
+            if (handData.active) {
+                smooth.x += (handData.x - smooth.x) * 0.1;
+                smooth.y += (handData.y - smooth.y) * 0.1;
+                
+                const tZ = handData.pinch ? 5 : 25;
+                smooth.zoom += (tZ - smooth.zoom) * 0.05;
+                
+                const tWarp = handData.pinch ? 2.5 : 0;
+                smooth.warp += (tWarp - smooth.warp) * 0.1;
+
+                document.getElementById('coords-x').innerText = `X_AXIS: ${smooth.x > 0 ? '+' : ''}${smooth.x.toFixed(4)}`;
+                document.getElementById('coords-y').innerText = `Y_AXIS: ${smooth.y > 0 ? '+' : ''}${smooth.y.toFixed(4)}`;
+                document.getElementById('val-vel').innerText = (1240.45 + smooth.warp * 8000).toFixed(2);
+
+                galaxy.rotation.x += (smooth.y * 1.8 - galaxy.rotation.x) * 0.05;
+                galaxy.rotation.z += (smooth.x * 1.0 - galaxy.rotation.z) * 0.05;
+                
+                camera.position.x += (smooth.x * 10 - camera.position.x) * 0.04;
+                camera.position.y += (-smooth.y * 10 - camera.position.y) * 0.04;
+                camera.position.z += (smooth.zoom - camera.position.z) * 0.08;
+
+                const pos = stars.geometry.attributes.position.array;
+                const ini = stars.geometry.userData.initPos;
+                for(let i=0; i < PARAMS.count; i++) {
+                    const i3 = i * 3;
+                    pos[i3+2] = ini[i3+2] * (1 + smooth.warp * 3.5);
+                }
+                stars.geometry.attributes.position.needsUpdate = true;
+            } else {
+                camera.position.z += (25 - camera.position.z) * 0.01;
+                smooth.warp *= 0.95;
+            }
+
+            camera.lookAt(0, 0, 0);
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.onload = () => { init(); setupAI(); };
+    </script>
+</body>
+</html>

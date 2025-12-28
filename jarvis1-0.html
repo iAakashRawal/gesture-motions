@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>JARVIS: Deep Space Tactical Interface</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&family=Space+Grotesk:wght@300&display=swap');
+        
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Space Grotesk', sans-serif; cursor: none; }
+        
+        #video-container { 
+            position: fixed; bottom: 30px; right: 30px; 
+            width: 240px; height: 180px; 
+            border-radius: 12px; overflow: hidden; 
+            border: 1px solid rgba(0, 255, 255, 0.3); 
+            z-index: 50; transform: scaleX(-1);
+            background: rgba(0,0,0,0.8);
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.2);
+        }
+        
+        #webcam { width: 100%; height: 100%; object-fit: cover; opacity: 0.6; filter: cyan; }
+        #output_canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 51; }
+
+        .ui-overlay { 
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            color: #00ffff; pointer-events: none; z-index: 40; 
+            padding: 40px;
+        }
+
+        #loading-screen { 
+            position: fixed; inset: 0; 
+            background: #000; 
+            display: flex; flex-direction: column; align-items: center; justify-content: center; 
+            z-index: 100; color: #00ffff; transition: opacity 1s ease;
+        }
+
+        .hud-ring {
+            position: absolute; border: 1px solid rgba(0, 255, 255, 0.1); border-radius: 50%;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            animation: rotate 20s linear infinite;
+        }
+
+        @keyframes rotate { from { transform: translate(-50%, -50%) rotate(0deg); } to { transform: translate(-50%, -50%) rotate(360deg); } }
+
+        .glitch-text { text-shadow: 0 0 10px #00ffff; animation: flicker 3s infinite; }
+        @keyframes flicker { 0%, 100% { opacity: 1; } 50% { opacity: 0.8; } 80% { opacity: 0.9; } }
+
+        .data-readout { font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: 2px; }
+    </style>
+</head>
+<body>
+
+    <div id="loading-screen">
+        <div class="relative w-32 h-32 mb-8">
+            <div class="absolute inset-0 border-4 border-cyan-500/20 rounded-full"></div>
+            <div class="absolute inset-0 border-t-4 border-cyan-500 rounded-full animate-spin"></div>
+            <div class="absolute inset-4 border-b-4 border-cyan-300 rounded-full animate-spin-reverse" style="animation-direction: reverse;"></div>
+        </div>
+        <p class="glitch-text text-xl tracking-[0.5em] uppercase">Initializing JARVIS</p>
+        <p class="text-[10px] opacity-50 mt-4 font-mono">ENCRYPTING BIO-METRIC DATA STREAM...</p>
+    </div>
+
+    <!-- JARVIS HUD Elements -->
+    <div class="ui-overlay">
+        <div class="hud-ring w-[90vh] h-[90vh]"></div>
+        <div class="hud-ring w-[70vh] h-[70vh]" style="animation-duration: 30s; border-style: dashed;"></div>
+        
+        <div class="flex justify-between items-start">
+            <div>
+                <div class="flex items-center gap-3 mb-2">
+                    <div class="w-2 h-8 bg-cyan-500"></div>
+                    <h1 class="text-4xl font-black tracking-tighter font-['Orbitron']">MK-85 <span class="text-cyan-400/50">TACTICAL</span></h1>
+                </div>
+                <div class="data-readout text-cyan-500/60 mb-8">SYSTEM STATUS: OPTIMAL</div>
+                
+                <div class="space-y-4">
+                    <div class="bg-cyan-500/5 border-l-2 border-cyan-500 p-4 w-64 backdrop-blur-md">
+                        <div class="text-[10px] uppercase font-bold text-cyan-300 mb-2">Neural Interface</div>
+                        <div id="gesture-hint" class="text-xs font-light text-cyan-100">Scanning for hand gestures...</div>
+                    </div>
+                    
+                    <div class="grid grid-cols-2 gap-2 w-64">
+                        <div class="bg-black/40 border border-cyan-500/20 p-2 text-[10px]">
+                            <div class="opacity-40">VELOCITY</div>
+                            <div id="val-vel">0.00 km/s</div>
+                        </div>
+                        <div class="bg-black/40 border border-cyan-500/20 p-2 text-[10px]">
+                            <div class="opacity-40">STARS</div>
+                            <div>45.2K</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="text-right font-mono text-[10px]">
+                <div class="mb-1 text-cyan-400">COORDINATES</div>
+                <div id="coords-x">X: 0.0000</div>
+                <div id="coords-y">Y: 0.0000</div>
+                <div id="coords-z">Z: 0.0000</div>
+                <div class="mt-4 border-t border-cyan-500/20 pt-2">
+                    SIGNAL: <span id="signal-strength" class="text-red-500">OFFLINE</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Bottom left data scan -->
+        <div class="absolute bottom-10 left-10 max-w-xs opacity-40 font-mono text-[8px] space-y-1">
+            <div>> EXTRACTING SECTOR DATA...</div>
+            <div>> ANALYZING STELLAR COMPOSITION...</div>
+            <div>> GALAXY ROTATION: 0.0015 RAD/S</div>
+            <div>> PINCH DETECTION: <span id="pinch-status">INACTIVE</span></div>
+        </div>
+    </div>
+
+    <div id="video-container">
+        <video id="webcam" autoplay playsinline></video>
+        <canvas id="output_canvas"></canvas>
+    </div>
+
+    <script>
+        // --- JARVIS AUDIO ENGINE ---
+        let audioCtx;
+        function playInterfaceSound(freq = 440, type = 'sine', vol = 0.05) {
+            if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            const osc = audioCtx.createOscillator();
+            const gain = audioCtx.createGain();
+            osc.type = type;
+            osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+            gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.1);
+            osc.connect(gain);
+            gain.connect(audioCtx.destination);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.1);
+        }
+
+        const PARAMS = {
+            starCount: 35000,
+            radius: 15,
+            branches: 3,
+            spin: 1.2,
+            insideColor: '#00f2ff',
+            outsideColor: '#7000ff'
+        };
+
+        let scene, camera, renderer, galaxy, stars, backgroundStars;
+        let handData = { x: 0, y: 0, pinch: 0, active: false };
+        let smoothedHand = { x: 0, y: 0, zoom: 20, warp: 0 };
+        
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const loadingScreen = document.getElementById('loading-screen');
+        const signalText = document.getElementById('signal-strength');
+        const hintText = document.getElementById('gesture-hint');
+
+        function initScene() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+            camera.position.z = 25;
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            createGalaxy();
+            animate();
+        }
+
+        function createGalaxy() {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(PARAMS.starCount * 3);
+            const colors = new Float32Array(PARAMS.starCount * 3);
+            const initialPositions = new Float32Array(PARAMS.starCount * 3);
+
+            const colorInside = new THREE.Color(PARAMS.insideColor);
+            const colorOutside = new THREE.Color(PARAMS.outsideColor);
+
+            for (let i = 0; i < PARAMS.starCount; i++) {
+                const i3 = i * 3;
+                const radius = Math.random() * PARAMS.radius;
+                const spinAngle = radius * PARAMS.spin;
+                const branchAngle = (i % PARAMS.branches) / PARAMS.branches * Math.PI * 2;
+
+                const rx = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3 * radius;
+                const ry = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.15 * radius;
+                const rz = Math.pow(Math.random(), 3) * (Math.random() < 0.5 ? 1 : -1) * 0.3 * radius;
+
+                positions[i3 + 0] = Math.cos(branchAngle + spinAngle) * radius + rx;
+                positions[i3 + 1] = ry;
+                positions[i3 + 2] = Math.sin(branchAngle + spinAngle) * radius + rz;
+                
+                initialPositions[i3] = positions[i3];
+                initialPositions[i3+1] = positions[i3+1];
+                initialPositions[i3+2] = positions[i3+2];
+
+                const mixedColor = colorInside.clone();
+                mixedColor.lerp(colorOutside, radius / PARAMS.radius);
+                colors[i3 + 0] = mixedColor.r;
+                colors[i3 + 1] = mixedColor.g;
+                colors[i3 + 2] = mixedColor.b;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            geometry.userData = { initialPositions };
+
+            const material = new THREE.PointsMaterial({
+                size: 0.05,
+                sizeAttenuation: true,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                vertexColors: true,
+                transparent: true,
+                opacity: 0.8
+            });
+
+            stars = new THREE.Points(geometry, material);
+            galaxy = new THREE.Group();
+            galaxy.add(stars);
+            scene.add(galaxy);
+        }
+
+        function setupMediaPipe() {
+            const hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.7
+            });
+
+            hands.onResults(onResults);
+
+            const cameraInput = new Camera(videoElement, {
+                onFrame: async () => {
+                    await hands.send({ image: videoElement });
+                },
+                width: 640,
+                height: 480
+            });
+            cameraInput.start();
+        }
+
+        function onResults(results) {
+            if (loadingScreen.style.opacity !== '0') {
+                loadingScreen.style.opacity = '0';
+                playInterfaceSound(880, 'sine', 0.1);
+                setTimeout(() => loadingScreen.remove(), 1000);
+            }
+
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const hand = results.multiHandLandmarks[0];
+                if(!handData.active) playInterfaceSound(1200, 'square', 0.05);
+                
+                handData.active = true;
+                signalText.innerText = "LINKED";
+                signalText.className = "text-cyan-400 font-bold glow";
+                hintText.innerHTML = "INTERFACE CONTROL ACTIVE <br> <span class='text-cyan-400'>ROTATION ENGAGED</span>";
+
+                // Map palm center
+                handData.x = (hand[9].x - 0.5) * 2;
+                handData.y = (hand[9].y - 0.5) * 2;
+
+                // Pinch detection (Index to Thumb)
+                const dx = hand[4].x - hand[8].x;
+                const dy = hand[4].y - hand[8].y;
+                const dist = Math.sqrt(dx*dx + dy*dy);
+                const isPinching = dist < 0.05;
+                
+                if(isPinching && handData.pinch === 0) playInterfaceSound(2000, 'sine', 0.1);
+                handData.pinch = isPinching ? 1 : 0;
+                document.getElementById('pinch-status').innerText = isPinching ? "ACTIVE (WARP)" : "INACTIVE";
+
+                // Draw skeleton on hud
+                drawConnectors(canvasCtx, hand, HAND_CONNECTIONS, {color: '#00ffff33', lineWidth: 2});
+                drawLandmarks(canvasCtx, hand, {color: '#00ffff', lineWidth: 1, radius: 2});
+            } else {
+                handData.active = false;
+                signalText.innerText = "OFFLINE";
+                signalText.className = "text-red-500 font-bold";
+                hintText.innerText = "WAITING FOR BIO-LINK...";
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Basic Rotation
+            galaxy.rotation.y += 0.0015;
+
+            if (handData.active) {
+                // Smoothing
+                smoothedHand.x += (handData.x - smoothedHand.x) * 0.1;
+                smoothedHand.y += (handData.y - smoothedHand.y) * 0.1;
+                
+                const targetZ = handData.pinch === 1 ? 6 : 25;
+                smoothedHand.zoom += (targetZ - smoothedHand.zoom) * 0.05;
+                
+                // Warp effect (Stretch stars when zooming)
+                const warpTarget = handData.pinch === 1 ? 1.5 : 0;
+                smoothedHand.warp += (warpTarget - smoothedHand.warp) * 0.1;
+
+                // Update HUD
+                document.getElementById('coords-x').innerText = `X: ${smoothedHand.x.toFixed(4)}`;
+                document.getElementById('coords-y').innerText = `Y: ${smoothedHand.y.toFixed(4)}`;
+                document.getElementById('val-vel').innerText = `${(1200 + smoothedHand.warp * 5000).toFixed(0)} km/s`;
+
+                // Scene Reaction
+                galaxy.rotation.x += (smoothedHand.y * 1.5 - galaxy.rotation.x) * 0.05;
+                galaxy.rotation.z += (smoothedHand.x * 0.8 - galaxy.rotation.z) * 0.05;
+                
+                camera.position.x += (smoothedHand.x * 8 - camera.position.x) * 0.03;
+                camera.position.y += (-smoothedHand.y * 8 - camera.position.y) * 0.03;
+                camera.position.z += (smoothedHand.zoom - camera.position.z) * 0.1;
+
+                // Apply Warp (Stretch positions)
+                const posArr = stars.geometry.attributes.position.array;
+                const initArr = stars.geometry.userData.initialPositions;
+                for(let i=0; i < PARAMS.starCount; i++) {
+                    const i3 = i * 3;
+                    // Stretch along Z based on speed
+                    posArr[i3+2] = initArr[i3+2] * (1 + smoothedHand.warp * 2);
+                }
+                stars.geometry.attributes.position.needsUpdate = true;
+
+            } else {
+                camera.position.z += (25 - camera.position.z) * 0.02;
+                smoothedHand.warp *= 0.9;
+            }
+
+            camera.lookAt(0, 0, 0);
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.onload = () => {
+            initScene();
+            setupMediaPipe();
+        };
+    </script>
+</body>
+</html>
