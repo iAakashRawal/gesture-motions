@@ -3,416 +3,352 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Neon Gesture Flight | Pro</title>
-    <!-- MediaPipe Solutions -->
-    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <title>Neon Head Flight | Clean</title>
+    <!-- MediaPipe Face Mesh -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <!-- Three.js -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;900&family=JetBrains+Mono:wght@300&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@900&display=swap');
         
-        body { margin: 0; overflow: hidden; background-color: #000; font-family: 'JetBrains Mono', monospace; }
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background-color: #000; 
+            cursor: none;
+        }
         
-        /* Minimalist Scanner UI */
+        /* Minimal Video Feed for tracking feedback */
         #video-container {
             position: absolute;
-            bottom: 30px;
-            right: 30px;
-            width: 140px;
-            height: 100px;
-            border: 1px solid rgba(0, 242, 255, 0.3);
-            border-radius: 4px;
+            bottom: 20px;
+            right: 20px;
+            width: 120px;
+            height: 90px;
+            border: 1px solid rgba(0, 242, 255, 0.2);
+            border-radius: 8px;
             overflow: hidden;
             z-index: 100;
             background: #000;
             transform: scaleX(-1);
-            transition: opacity 0.5s ease;
+            opacity: 0.3;
+            transition: opacity 0.3s;
         }
-        #webcam { width: 100%; height: 100%; object-fit: cover; opacity: 0.6; filter: grayscale(1) contrast(1.2) brightness(1.5); }
-        
-        /* Scanline effect for the webcam */
-        .scanline {
-            width: 100%;
-            height: 2px;
-            background: rgba(0, 242, 255, 0.5);
-            position: absolute;
-            top: 0;
-            left: 0;
-            animation: scan 3s linear infinite;
-            z-index: 101;
-            pointer-events: none;
-        }
-
-        @keyframes scan {
-            0% { top: 0; }
-            100% { top: 100%; }
-        }
+        #video-container:hover { opacity: 0.8; }
+        #webcam { width: 100%; height: 100%; object-fit: cover; filter: brightness(1.2) contrast(1.2) grayscale(1); }
 
         #ui-layer {
             position: absolute;
             inset: 0;
-            padding: 2.5rem;
             pointer-events: none;
-            color: #fff;
             z-index: 10;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
         }
 
-        .hud-border {
-            border-left: 2px solid #00f2ff;
-            padding-left: 15px;
+        #score-container {
+            position: absolute;
+            top: 40px;
+            right: 40px;
+            text-align: right;
+        }
+
+        #score {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 4rem;
+            color: #00f2ff;
+            text-shadow: 0 0 20px rgba(0, 242, 255, 0.5);
+            letter-spacing: -2px;
+            font-style: italic;
+        }
+
+        #speed-gauge {
+            position: absolute;
+            bottom: 40px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 200px;
+            height: 2px;
+            background: rgba(255,255,255,0.1);
+        }
+
+        #speed-bar {
+            height: 100%;
+            background: #00f2ff;
+            box-shadow: 0 0 10px #00f2ff;
+            width: 0%;
+            transition: width 0.1s linear;
         }
 
         #overlay {
             position: absolute;
             inset: 0;
-            background: radial-gradient(circle at center, rgba(0,20,30,0.85) 0%, #000 100%);
+            background: #000;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             z-index: 1000;
             color: white;
-            text-align: center;
         }
 
-        .glitch-text {
+        .start-btn {
+            background: none;
+            border: 1px solid #00f2ff;
+            color: #00f2ff;
+            padding: 15px 40px;
             font-family: 'Orbitron', sans-serif;
-            text-shadow: 0 0 20px rgba(0, 242, 255, 0.8);
+            font-size: 1.2rem;
+            letter-spacing: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .start-btn:hover {
+            background: #00f2ff;
+            color: #000;
+            box-shadow: 0 0 30px #00f2ff;
         }
 
         #game-over {
-            backdrop-filter: blur(10px);
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.95);
+            z-index: 2000;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: #ff0055;
+            font-family: 'Orbitron', sans-serif;
         }
     </style>
 </head>
 <body>
 
     <div id="ui-layer">
-        <div class="flex justify-between items-start">
-            <div class="hud-border">
-                <h1 class="text-2xl font-black tracking-widest glitch-text text-cyan-400">NEON_FLIGHT.v2</h1>
-                <div class="flex items-center mt-1">
-                    <div id="hand-status-dot" class="w-2 h-2 rounded-full bg-gray-600 mr-2 transition-all"></div>
-                    <span id="hand-status-text" class="text-[10px] uppercase tracking-[0.2em] opacity-50">SYNCING_NEURAL_LINK...</span>
-                </div>
-            </div>
-            <div class="text-right">
-                <div class="text-5xl font-black italic tracking-tighter text-cyan-400" style="font-family: 'Orbitron'" id="score">00000</div>
-                <div class="text-[10px] tracking-[0.3em] opacity-40 uppercase">Distance Matrix</div>
-            </div>
+        <div id="score-container">
+            <div id="score">0000</div>
         </div>
-        
-        <div class="flex justify-center mb-10">
-            <div class="w-64 h-1 bg-white/10 rounded-full overflow-hidden">
-                <div id="speed-bar" class="h-full bg-cyan-400 shadow-[0_0_15px_#00f2ff]" style="width: 20%"></div>
-            </div>
+        <div id="speed-gauge">
+            <div id="speed-bar"></div>
         </div>
     </div>
 
     <div id="video-container">
-        <div class="scanline"></div>
         <video id="webcam" autoplay playsinline></video>
     </div>
 
     <div id="overlay">
-        <h2 class="text-6xl font-black mb-4 glitch-text italic">INITIALIZE</h2>
-        <p class="mb-10 max-w-sm font-light text-cyan-200/60 leading-relaxed uppercase tracking-widest text-xs">
-            Hand-tracking flight interface active.<br>Position palm in sensor range to engage.
-        </p>
-        <button id="start-btn" class="group relative px-12 py-4 overflow-hidden border border-cyan-500/50 rounded-sm">
-            <span class="relative z-10 text-cyan-400 font-bold tracking-[0.5em] transition-colors group-hover:text-black">CONNECT</span>
-            <div class="absolute inset-0 bg-cyan-400 translate-y-full transition-transform group-hover:translate-y-0"></div>
-        </button>
-        <div id="loading-msg" class="hidden mt-6 text-cyan-400 animate-pulse text-xs tracking-[0.3em]">LOADING_CORE_MODELS...</div>
+        <button id="start-btn" class="start-btn">ENGAGE</button>
+        <div id="loading-msg" class="hidden mt-8 text-cyan-400 animate-pulse font-mono text-xs tracking-widest">CALIBRATING_OPTICAL_SENSORS...</div>
     </div>
 
-    <div id="game-over" class="hidden fixed inset-0 bg-black/90 z-[2000] flex flex-col items-center justify-center text-white">
-        <h2 class="text-8xl font-black mb-2 italic glitch-text text-red-500 uppercase">System Failure</h2>
-        <p id="final-score" class="text-xl mb-12 font-mono tracking-widest text-red-300"></p>
-        <button onclick="location.reload()" class="px-12 py-3 border-2 border-red-500 text-red-500 font-bold uppercase tracking-widest hover:bg-red-500 hover:text-black transition-all">
-            REBOOT_KERNEL
-        </button>
+    <div id="game-over">
+        <h2 class="text-6xl font-black mb-8 italic">CRASHED</h2>
+        <button onclick="location.reload()" class="start-btn" style="border-color: #ff0055; color: #ff0055;">RESTART</button>
     </div>
 
     <script>
-        // --- CONFIG ---
         const config = {
-            initialSpeed: 1.0,
-            maxSpeed: 3.5,
-            obstacleSpawnRate: 35,
-            tunnelRadius: 16,
-            shipSensitivity: 0.15,
-            particleCount: 200
+            initialSpeed: 1.2,
+            maxSpeed: 4.5,
+            obstacleSpawnRate: 30,
+            tunnelRadius: 18,
+            smoothing: 0.1, // Smoothness of head movement
+            sensitivity: { x: 25, y: 18 }
         };
 
-        let gameState = {
+        let state = {
             active: false,
             score: 0,
-            handPos: { x: 0, y: 0 },
-            hasHand: false,
+            head: { x: 0, y: 0 },
             frame: 0,
-            currentSpeed: config.initialSpeed
+            speed: config.initialSpeed
         };
 
-        // --- THREE.JS ENGINE ---
         let scene, camera, renderer, ship, tunnel, obstacles = [], particles;
-        
+
         function initThree() {
             scene = new THREE.Scene();
-            scene.fog = new THREE.FogExp2(0x000000, 0.012);
+            scene.fog = new THREE.FogExp2(0x000000, 0.015);
 
-            camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.1, 1000);
-            camera.position.z = 8;
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 10;
 
-            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer = new THREE.WebGLRenderer({ antialias: true });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setPixelRatio(window.devicePixelRatio);
             document.body.appendChild(renderer.domElement);
 
-            // Light Rig
-            scene.add(new THREE.AmbientLight(0x404040, 0.5));
-            const pLight = new THREE.PointLight(0x00f2ff, 5, 20);
-            pLight.position.set(0, 0, 5);
+            // Lighting
+            const pLight = new THREE.PointLight(0x00f2ff, 10, 50);
+            pLight.position.set(0, 5, 10);
             scene.add(pLight);
+            scene.add(new THREE.AmbientLight(0x222222));
 
-            // Modern Ship Design
+            // Ship (Minimalist Stealth Design)
             const shipGroup = new THREE.Group();
-            const bodyMat = new THREE.MeshPhongMaterial({ color: 0x111111, specular: 0x00f2ff, shininess: 100 });
-            const glowMat = new THREE.MeshBasicMaterial({ color: 0x00f2ff });
+            const shipMat = new THREE.MeshPhongMaterial({ color: 0x050505, specular: 0x00f2ff, shininess: 100 });
+            
+            const body = new THREE.Mesh(new THREE.ConeGeometry(0.4, 2, 4), shipMat);
+            body.rotation.x = Math.PI / 2;
+            shipGroup.add(body);
 
-            const fuselage = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.2, 1.8), bodyMat);
-            shipGroup.add(fuselage);
+            const wing = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.05, 0.8), shipMat);
+            wing.position.z = 0.2;
+            shipGroup.add(wing);
 
-            const wingR = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.05, 0.6), bodyMat);
-            wingR.position.x = 0.6;
-            shipGroup.add(wingR);
-
-            const wingL = wingR.clone();
-            wingL.position.x = -0.6;
-            shipGroup.add(wingL);
-
-            // Engine Trail / Glow
-            const engine = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.15, 0.1), glowMat);
-            engine.position.z = 0.95;
-            shipGroup.add(engine);
+            const engineGlow = new THREE.Mesh(
+                new THREE.BoxGeometry(0.3, 0.1, 0.1), 
+                new THREE.MeshBasicMaterial({ color: 0x00f2ff })
+            );
+            engineGlow.position.z = 1;
+            shipGroup.add(engineGlow);
 
             ship = shipGroup;
             scene.add(ship);
 
-            // Warp Particles
-            initParticles();
-            
             // Tunnel
-            createTunnel();
-
-            window.addEventListener('resize', onWindowResize, false);
-        }
-
-        function initParticles() {
-            const geo = new THREE.BufferGeometry();
-            const pos = new Float32Array(config.particleCount * 3);
-            for(let i=0; i<config.particleCount*3; i++) pos[i] = (Math.random() - 0.5) * 100;
-            geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-            const mat = new THREE.PointsMaterial({ color: 0x00f2ff, size: 0.1, transparent: true, opacity: 0.8 });
-            particles = new THREE.Points(geo, mat);
-            scene.add(particles);
-        }
-
-        function createTunnel() {
-            const tunnelGeo = new THREE.CylinderGeometry(config.tunnelRadius, config.tunnelRadius, 1000, 8, 1, true);
-            tunnelGeo.rotateX(Math.PI / 2);
-            const tunnelMat = new THREE.MeshPhongMaterial({
-                color: 0x00f2ff,
-                wireframe: true,
-                side: THREE.BackSide,
-                transparent: true,
-                opacity: 0.05
-            });
-            tunnel = new THREE.Mesh(tunnelGeo, tunnelMat);
-            tunnel.position.z = -500;
+            const tGeo = new THREE.CylinderGeometry(config.tunnelRadius, config.tunnelRadius, 1000, 12, 1, true);
+            tGeo.rotateX(Math.PI/2);
+            tunnel = new THREE.Mesh(tGeo, new THREE.MeshPhongMaterial({
+                color: 0x00f2ff, wireframe: true, side: THREE.BackSide, transparent: true, opacity: 0.1
+            }));
+            tunnel.position.z = -450;
             scene.add(tunnel);
 
-            // Neon Pulse Rings
-            for(let i=0; i<15; i++) {
-                const ring = new THREE.Mesh(
-                    new THREE.TorusGeometry(config.tunnelRadius, 0.05, 8, 64),
-                    new THREE.MeshBasicMaterial({ color: 0x00f2ff, transparent: true, opacity: 0.2 })
-                );
-                ring.position.z = -i * 70;
-                scene.add(ring);
-            }
+            // Starfield
+            const starGeo = new THREE.BufferGeometry();
+            const starPos = new Float32Array(1000 * 3);
+            for(let i=0; i<3000; i++) starPos[i] = (Math.random()-0.5) * 200;
+            starGeo.setAttribute('position', new THREE.BufferAttribute(starPos, 3));
+            particles = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0x00f2ff, size: 0.1 }));
+            scene.add(particles);
+
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight;
+                camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
         }
 
         function spawnObstacle() {
-            const type = Math.random();
-            let geo;
-            if(type > 0.5) {
-                geo = new THREE.TorusGeometry(3 + Math.random() * 6, 0.3, 8, 24);
-            } else {
-                geo = new THREE.BoxGeometry(Math.random()*15 + 2, 0.5, 0.5);
-            }
-
-            const mat = new THREE.MeshStandardMaterial({ 
-                color: 0xff0055, 
-                emissive: 0xff0055, 
-                emissiveIntensity: 3 
-            });
-            const obs = new THREE.Mesh(geo, mat);
+            const size = 2 + Math.random() * 8;
+            const geo = Math.random() > 0.5 ? new THREE.IcosahedronGeometry(size, 0) : new THREE.TorusGeometry(size, 0.2, 8, 16);
+            const obs = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ 
+                color: 0xff0055, emissive: 0xff0055, emissiveIntensity: 2 
+            }));
             
-            obs.position.x = (Math.random() - 0.5) * (config.tunnelRadius * 1.6);
-            obs.position.y = (Math.random() - 0.5) * (config.tunnelRadius * 1.6);
-            obs.position.z = -300;
+            obs.position.x = (Math.random() - 0.5) * 40;
+            obs.position.y = (Math.random() - 0.5) * 30;
+            obs.position.z = -400;
             obs.rotation.set(Math.random()*Math.PI, Math.random()*Math.PI, 0);
             
             obstacles.push(obs);
             scene.add(obs);
         }
 
-        function onWindowResize() {
-            camera.aspect = window.innerWidth / window.innerHeight;
-            camera.updateProjectionMatrix();
-            renderer.setSize(window.innerWidth, window.innerHeight);
-        }
-
-        // --- HAND TRACKING ---
+        // --- HEAD TRACKING ---
         const videoElement = document.getElementById('webcam');
-        const statusDot = document.getElementById('hand-status-dot');
-        const statusText = document.getElementById('hand-status-text');
+        const faceMesh = new FaceMesh({
+            locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+        });
 
-        function onResults(results) {
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                gameState.hasHand = true;
-                statusDot.style.background = '#00f2ff';
-                statusDot.style.boxShadow = '0 0 10px #00f2ff';
-                statusText.innerText = 'NEURAL_LINK_ESTABLISHED';
-                
-                const landmark = results.multiHandLandmarks[0][9];
-                gameState.handPos.x = (0.5 - landmark.x) * 2; 
-                gameState.handPos.y = (0.5 - landmark.y) * 2;
-            } else {
-                gameState.hasHand = false;
-                statusDot.style.background = '#333';
-                statusDot.style.boxShadow = 'none';
-                statusText.innerText = 'LINK_INTERRUPTED_AUTO_PILOT';
-                gameState.handPos.x *= 0.95;
-                gameState.handPos.y *= 0.95;
+        faceMesh.setOptions({
+            maxNumFaces: 1,
+            refineLandmarks: true,
+            minDetectionConfidence: 0.5,
+            minTrackingConfidence: 0.5
+        });
+
+        faceMesh.onResults((results) => {
+            if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
+                // Landmark 1 is the tip of the nose
+                const nose = results.multiFaceLandmarks[0][1];
+                // Invert X because camera is mirrored
+                state.head.x = (0.5 - nose.x) * 2;
+                state.head.y = (0.5 - nose.y) * 2;
             }
-        }
+        });
 
-        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
-        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.6, minTrackingConfidence: 0.6 });
-        hands.onResults(onResults);
-
-        const cameraPipe = new Camera(videoElement, {
-            onFrame: async () => { await hands.send({image: videoElement}); },
+        const cam = new Camera(videoElement, {
+            onFrame: async () => { await faceMesh.send({image: videoElement}); },
             width: 640, height: 480
         });
 
-        // --- LOOP ---
         function animate() {
-            if (!gameState.active) return;
+            if (!state.active) return;
             requestAnimationFrame(animate);
 
-            gameState.frame++;
+            state.frame++;
+            state.speed = Math.min(config.maxSpeed, config.initialSpeed + (state.score / 20000));
+            document.getElementById('speed-bar').style.width = `${(state.speed / config.maxSpeed) * 100}%`;
+
+            // Ship Movement (Target interpolation)
+            const tx = state.head.x * config.sensitivity.x;
+            const ty = state.head.y * config.sensitivity.y;
+
+            ship.position.x += (tx - ship.position.x) * config.smoothing;
+            ship.position.y += (ty - ship.position.y) * config.smoothing;
+
+            // Visual tilt based on movement
+            ship.rotation.z = (ship.position.x - tx) * 0.1;
+            ship.rotation.x = (ty - ship.position.y) * 0.1 + (Math.PI/2); // Offset for geometry
             
-            // Speed progression
-            gameState.currentSpeed = Math.min(config.maxSpeed, config.initialSpeed + (gameState.score / 15000));
-            document.getElementById('speed-bar').style.width = `${(gameState.currentSpeed / config.maxSpeed) * 100}%`;
-
-            // Movement Physics
-            const targetX = gameState.handPos.x * 14;
-            const targetY = gameState.handPos.y * 12;
-            
-            ship.position.x += (targetX - ship.position.x) * config.shipSensitivity;
-            ship.position.y += (targetY - ship.position.y) * config.shipSensitivity;
-            
-            // Dynamic Rotation & Camera tilt
-            ship.rotation.z = (ship.position.x - targetX) * 0.15;
-            ship.rotation.x = (targetY - ship.position.y) * 0.15;
-            ship.rotation.y = Math.sin(gameState.frame * 0.05) * 0.02;
-
-            camera.rotation.z = ship.rotation.z * 0.2;
-            camera.position.x = ship.position.x * 0.15;
-            camera.position.y = ship.position.y * 0.15;
-
-            // Particles Speed effect
-            const positions = particles.geometry.attributes.position.array;
-            for(let i=0; i<positions.length; i+=3) {
-                positions[i+2] += gameState.currentSpeed * 2;
-                if(positions[i+2] > 10) positions[i+2] = -100;
-            }
-            particles.geometry.attributes.position.needsUpdate = true;
-
-            // Spawn Obstacles
-            const spawnAdjusted = Math.max(15, config.obstacleSpawnRate - Math.floor(gameState.score / 2000));
-            if (gameState.frame % spawnAdjusted === 0) spawnObstacle();
+            // Camera follow
+            camera.position.x = ship.position.x * 0.4;
+            camera.position.y = ship.position.y * 0.4;
+            camera.lookAt(0, 0, -20);
 
             // Obstacle logic
+            if (state.frame % config.obstacleSpawnRate === 0) spawnObstacle();
+
             for (let i = obstacles.length - 1; i >= 0; i--) {
                 const obs = obstacles[i];
-                obs.position.z += gameState.currentSpeed;
-                obs.rotation.x += 0.01;
-                obs.rotation.y += 0.01;
+                obs.position.z += state.speed * 2;
+                obs.rotation.y += 0.02;
 
-                // Hit Detection
-                if (ship.position.distanceTo(obs.position) < 1.6) {
-                    triggerShake();
+                // Simple collision
+                if (ship.position.distanceTo(obs.position) < 2.5) {
                     gameOver();
                 }
 
-                if (obs.position.z > 15) {
+                if (obs.position.z > 20) {
                     scene.remove(obs);
                     obstacles.splice(i, 1);
                 }
             }
 
-            tunnel.rotation.z += 0.002;
-            gameState.score += Math.floor(gameState.currentSpeed * 2);
-            document.getElementById('score').innerText = gameState.score.toString().padStart(5, '0');
+            // Stars movement
+            particles.position.z += state.speed;
+            if (particles.position.z > 100) particles.position.z = 0;
+
+            tunnel.rotation.z += 0.001;
+            state.score += Math.floor(state.speed);
+            document.getElementById('score').innerText = state.score.toString().padStart(4, '0');
 
             renderer.render(scene, camera);
         }
 
-        function triggerShake() {
-            const intensity = 0.5;
-            const duration = 500;
-            const start = Date.now();
-            
-            const shake = () => {
-                const elapsed = Date.now() - start;
-                if(elapsed < duration) {
-                    renderer.domElement.style.transform = `translate(${(Math.random()-0.5)*10}px, ${(Math.random()-0.5)*10}px)`;
-                    requestAnimationFrame(shake);
-                } else {
-                    renderer.domElement.style.transform = 'none';
-                }
-            };
-            shake();
-        }
-
         function gameOver() {
-            gameState.active = false;
-            document.getElementById('game-over').classList.remove('hidden');
-            document.getElementById('final-score').innerText = `DATA_RECOVERY: ${gameState.score} KM`;
+            state.active = false;
+            document.getElementById('game-over').style.display = 'flex';
+            document.body.style.cursor = 'default';
         }
 
         document.getElementById('start-btn').addEventListener('click', async () => {
-            document.getElementById('start-btn').classList.add('hidden');
+            document.getElementById('start-btn').style.display = 'none';
             document.getElementById('loading-msg').classList.remove('hidden');
 
             try {
-                await cameraPipe.start();
+                await cam.start();
                 initThree();
-                gameState.active = true;
-                document.getElementById('overlay').classList.add('hidden');
+                state.active = true;
+                document.getElementById('overlay').style.display = 'none';
                 animate();
             } catch (err) {
-                document.getElementById('loading-msg').innerText = "ERROR: SENSOR_ACCESS_DENIED";
+                document.getElementById('loading-msg').innerText = "CAMERA_ERROR: ACCESS_DENIED";
             }
         });
     </script>
